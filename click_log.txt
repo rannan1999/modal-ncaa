@@ -1,1 +1,1 @@
-最后一次部署: 2026-09-14 01:51:04 UTC | 区域: eu-north | URL: https://rannan1999--proxy-app-ncaa-server.modal.run
+最后一次部署: 2026-09-14 02:23:20 UTC | 区域: eu-north | URL: https://rannan1999--ncaa-ncaa-server.modal.run

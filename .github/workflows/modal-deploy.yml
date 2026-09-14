@@ -216,7 +216,7 @@ jobs:
 
       - name: 解析部署区域
         run: |
-          FULL_INPUT="${{ github.event.inputs.deploy_region || 'ap-southeast | 亚太东南（自动分配）' }}"
+          FULL_INPUT="${{ github.event.inputs.deploy_region || 'eu-north | 北欧（自动分配）' }}"
 
           if echo "$FULL_INPUT" | grep -q '|'; then
             REGION=$(echo "$FULL_INPUT" | cut -d'|' -f1 | xargs)

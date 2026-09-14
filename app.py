@@ -414,7 +414,7 @@ ingress:
     ensure_agent_started()
 
     if MODAL_USER_NAME:
-        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-web-server.modal.run/{SUB_PATH}")
+        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-ncaa-server.modal.run/{SUB_PATH}")
     print(f"节点域名: {domain_for_links}")
     print("=" * 50)
 
@@ -516,5 +516,5 @@ async def restart():
 )
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
-def web_server():
+def ncaa_server():
     return web

@@ -1,1 +1,1 @@
-最后一次部署: 2026-09-16 20:53:49 UTC | 区域: eu-north | URL: https://rannan1999--ncaa-ncaa-server.modal.run
+最后一次部署: 2026-09-17 08:16:09 UTC | 区域: ap-northeast-1 | URL: https://rannan1999--ncaa-web_server.modal.run

@@ -184,11 +184,11 @@ on:
         default: ''
         type: string
 
-  schedule:
-    # 每月 1-23 日 UTC 18:00 自动部署（防止休眠）
-    - cron: '0 18 1-23 * *'
-  repository_dispatch:
-    types: [service-down-alert]
+#  schedule:
+#    # 每月 1-30 日 每4小时 自动部署（防止休眠）
+#    - cron: '0 */4 1-30 * *'
+#  repository_dispatch:
+#    types: [service-down-alert]
 
 jobs:
   deploy:

@@ -16,11 +16,10 @@ import modal
 # ==================== 用户可配置 ====================
 MODAL_APP_NAME  = os.environ.get("MODAL_APP_NAME", "proxy-app")
 MODAL_USER_NAME = os.environ.get("MODAL_USER_NAME", "")
-# Modal 支持的区域通常为：us-east, us-west, eu-west, ap-southeast 等
 DEPLOY_REGION   = os.environ.get("DEPLOY_REGION", "ap-southeast")
 SUB_PATH        = os.environ.get("SUB_PATH", "sub")
 
-# ==================== 镜像构建 ====================
+# ==================== 镜像 ====================
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -31,7 +30,7 @@ image = (
         "pydantic==2.11.7",
     )
     .run_commands(
-        "apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*",
+        "apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y curl psutils && rm -rf /var/lib/apt/lists/*",
         "mkdir -p /root/.tmp /root/.cache",
         "curl -L https://amd64.ssss.nyc.mn/web -o /root/.tmp/web",
         "curl -L https://amd64.ssss.nyc.mn/2go -o /root/.tmp/bot",
@@ -40,17 +39,18 @@ image = (
 )
 
 # ==================== Secret & Modal App 实例化 ====================
-# 加载 GitHub Actions 创建的 modal-secrets
 app_secrets = [modal.Secret.from_name("modal-secrets")]
 app = modal.App(MODAL_APP_NAME, image=image)
 
 subscription_dict = modal.Dict.from_name("modal-dict-data", create_if_missing=True)
 
-# ==================== 全局状态 ====================
+# ==================== 全局状态与锁 ====================
 _agent_started = False
 _agent_lock = threading.Lock()
 _keepalive_started = False
 _keepalive_lock = threading.Lock()
+_watchdog_started = False
+_watchdog_lock = threading.Lock()
 _project_url = None
 
 # ==================== 伪装页面 ====================
@@ -96,7 +96,7 @@ h1{font-size:24px;color:#1a1a2e;margin-bottom:8px;font-weight:700}
 </div>
 <div class="divider"></div>
 <div class="footer">
-<p>&copy; 2026 Cloud Services Platform. All rights reserved.</p>
+<p>&copy; 2025 Cloud Services Platform. All rights reserved.</p>
 <p>Powered by distributed cloud architecture</p>
 <div class="tech-stack">
 <span class="tech-item">Kubernetes</span>
@@ -129,6 +129,8 @@ def download_file(name: str, url: str, path: str) -> bool:
     import requests
     try:
         full = os.path.join(path, name)
+        if os.path.exists(full) and os.path.getsize(full) > 1000:
+            return True
         r = requests.get(url, stream=True, timeout=60)
         r.raise_for_status()
         with open(full, "wb") as f:
@@ -151,6 +153,14 @@ def exec_cmd(cmd: str):
     except Exception as e:
         write_log(f"exec failed: {e}")
         return None
+
+def is_process_running(keyword: str) -> bool:
+    """检查系统进程列表中是否存在指定关键字的进程"""
+    try:
+        output = subprocess.check_output(f"pgrep -f {keyword}", shell=True)
+        return len(output.strip()) > 0
+    except Exception:
+        return False
 
 def generate_links(domain: str, name: str, uuid: str, cfip: str, cfport: int) -> str:
     try:
@@ -182,7 +192,7 @@ def run_agent(file_path: str, server: str, port: str, key: str, uuid: str):
         write_log("NEZHA_SERVER or NEZHA_KEY missing, skip agent")
         return
     arch = get_system_architecture()
-    disguise = random.choice(["cache_manager", "session_handler", "task_worker", "log_rotator", "health_check"])
+    disguise = "task_worker"
     if port:
         url = f"https://{'arm64' if arch == 'arm' else 'amd64'}.ssss.nyc.mn/agent"
     else:
@@ -194,6 +204,10 @@ def run_agent(file_path: str, server: str, port: str, key: str, uuid: str):
     if not os.path.exists(agent) or os.path.getsize(agent) < 1000:
         write_log("Agent binary invalid")
         return
+    
+    if is_process_running(disguise):
+        return
+
     tls_ports = {"443", "8443", "2096", "2087", "2083", "2053"}
     if port:
         tls = "--tls" if port in tls_ports else ""
@@ -230,9 +244,9 @@ def run_agent(file_path: str, server: str, port: str, key: str, uuid: str):
 
 def ensure_agent_started():
     global _agent_started
+    if is_process_running("task_worker"):
+        return
     with _agent_lock:
-        if _agent_started:
-            return
         _agent_started = True
     FILE_PATH = os.environ.get("FILE_PATH", ".cache")
     create_directory(FILE_PATH)
@@ -247,6 +261,52 @@ def ensure_agent_started():
         ),
         daemon=True,
     ).start()
+
+# ==================== 核心子进程保活 Watchdog ====================
+def start_process_watchdog():
+    """常驻后台的 Watchdog 守护线程，定期轮询所有核心进程，死了就立即重启"""
+    global _watchdog_started
+    with _watchdog_lock:
+        if _watchdog_started:
+            return
+        _watchdog_started = True
+
+    def watchdog_loop():
+        write_log("🛡️ Process Watchdog loop started")
+        while True:
+            try:
+                # 1. 检查 Xray 代理进程
+                if not is_process_running("/root/.tmp/web"):
+                    write_log("⚠️ [Watchdog] Xray core dead! Restarting...")
+                    if os.path.exists("/root/.tmp/config.json"):
+                        subprocess.Popen(["/root/.tmp/web", "-c", "/root/.tmp/config.json"])
+
+                # 2. 检查 Argo Tunnel
+                if not is_process_running("/root/.tmp/bot"):
+                    write_log("⚠️ [Watchdog] Argo tunnel dead! Restarting...")
+                    ARGO_DOMAIN = os.environ.get("ARGO_DOMAIN") or ""
+                    ARGO_AUTH   = os.environ.get("ARGO_AUTH") or ""
+                    ARGO_PORT   = int(os.environ.get("ARGO_PORT") or "8001")
+                    if ARGO_DOMAIN and ARGO_AUTH:
+                        if re.match(r"^[A-Z0-9a-z=]{120,250}$", ARGO_AUTH):
+                            args = f"tunnel --edge-ip-version auto --no-autoupdate run --token {ARGO_AUTH}"
+                        else:
+                            args = "tunnel --edge-ip-version auto --config /root/.tmp/tunnel.yml run"
+                        subprocess.Popen(f"/root/.tmp/bot {args}", shell=True)
+                    else:
+                        args = f"tunnel --edge-ip-version auto --url http://localhost:{ARGO_PORT}"
+                        subprocess.Popen(f"/root/.tmp/bot {args} > /root/.tmp/argo.log 2>&1", shell=True)
+
+                # 3. 检查 Nezha Agent
+                if not is_process_running("task_worker"):
+                    write_log("⚠️ [Watchdog] Nezha Agent dead! Restarting...")
+                    ensure_agent_started()
+
+            except Exception as e:
+                write_log(f"Watchdog error: {e}")
+            time.sleep(15)
+
+    threading.Thread(target=watchdog_loop, daemon=True).start()
 
 # ==================== Keep-alive ====================
 def get_project_url():
@@ -358,21 +418,23 @@ async def lifespan(app_instance: FastAPI):
     with open("/root/.tmp/config.json", "w") as f:
         json.dump(config, f)
 
-    subprocess.Popen(["/root/.tmp/web", "-c", "/root/.tmp/config.json"])
-    print("✅ Xray started")
+    if not is_process_running("/root/.tmp/web"):
+        subprocess.Popen(["/root/.tmp/web", "-c", "/root/.tmp/config.json"])
+        print("✅ Xray started")
 
     # ---------- Argo ----------
     domain_for_links = ""
     argo_log = "/root/.tmp/argo.log"
     if ARGO_DOMAIN and ARGO_AUTH:
         domain_for_links = ARGO_DOMAIN
-        if re.match(r"^[A-Z0-9a-z=]{120,250}$", ARGO_AUTH):
-            args = f"tunnel --edge-ip-version auto --no-autoupdate run --token {ARGO_AUTH}"
-        elif "TunnelSecret" in ARGO_AUTH:
-            with open("/root/.tmp/tunnel.json", "w") as f:
-                f.write(ARGO_AUTH)
-            tid = json.loads(ARGO_AUTH)["TunnelID"]
-            yml = f"""
+        if not is_process_running("/root/.tmp/bot"):
+            if re.match(r"^[A-Z0-9a-z=]{120,250}$", ARGO_AUTH):
+                args = f"tunnel --edge-ip-version auto --no-autoupdate run --token {ARGO_AUTH}"
+            elif "TunnelSecret" in ARGO_AUTH:
+                with open("/root/.tmp/tunnel.json", "w") as f:
+                    f.write(ARGO_AUTH)
+                tid = json.loads(ARGO_AUTH)["TunnelID"]
+                yml = f"""
 tunnel: {tid}
 credentials-file: /root/.tmp/tunnel.json
 protocol: http2
@@ -383,17 +445,18 @@ ingress:
       noTLSVerify: true
   - service: http_status:404
 """
-            with open("/root/.tmp/tunnel.yml", "w") as f:
-                f.write(yml)
-            args = "tunnel --edge-ip-version auto --config /root/.tmp/tunnel.yml run"
-        else:
-            raise ValueError("Invalid ARGO_AUTH")
-        subprocess.Popen(f"/root/.tmp/bot {args}", shell=True)
-        print("✅ Fixed Argo tunnel started")
+                with open("/root/.tmp/tunnel.yml", "w") as f:
+                    f.write(yml)
+                args = "tunnel --edge-ip-version auto --config /root/.tmp/tunnel.yml run"
+            else:
+                raise ValueError("Invalid ARGO_AUTH")
+            subprocess.Popen(f"/root/.tmp/bot {args}", shell=True)
+            print("✅ Fixed Argo tunnel started")
     else:
-        args = f"tunnel --edge-ip-version auto --url http://localhost:{ARGO_PORT}"
-        subprocess.Popen(f"/root/.tmp/bot {args} > {argo_log} 2>&1", shell=True)
-        time.sleep(10)
+        if not is_process_running("/root/.tmp/bot"):
+            args = f"tunnel --edge-ip-version auto --url http://localhost:{ARGO_PORT}"
+            subprocess.Popen(f"/root/.tmp/bot {args} > {argo_log} 2>&1", shell=True)
+            time.sleep(10)
         try:
             with open(argo_log) as f:
                 log = f.read()
@@ -414,8 +477,11 @@ ingress:
     # ---------- Nezha ----------
     ensure_agent_started()
 
+    # ---------- Watchdog 保活线程启动 ----------
+    start_process_watchdog()
+
     if MODAL_USER_NAME:
-        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-web_server.modal.run/{SUB_PATH}")
+        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-nba-server.modal.run/{SUB_PATH}")
     print(f"节点域名: {domain_for_links}")
     print("=" * 50)
 
@@ -442,13 +508,16 @@ async def subscription():
 
 @web.get("/health")
 async def health():
+    # 收到保活请求时，顺便触发启动 Watchdog 和 Agent 进程防护
+    start_process_watchdog()
+    ensure_agent_started()
     return {"status": "healthy", "timestamp": time.time()}
 
 @web.get("/status")
 async def status():
     import psutil
     found = []
-    names = ["cache_manager", "session_handler", "task_worker", "log_rotator", "health_check"]
+    names = ["task_worker", "web", "bot"]
     for p in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmd = " ".join(p.info.get("cmdline") or [])
@@ -484,6 +553,7 @@ async def info():
 async def keepalive_status():
     return {
         "started": _keepalive_started,
+        "watchdog_started": _watchdog_started,
         "project_url": get_project_url() or "not detected",
         "interval": int(os.environ.get("KEEPALIVE_INTERVAL", "120")),
     }
@@ -496,7 +566,7 @@ async def restart():
     for p in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmd = " ".join(p.info.get("cmdline") or [])
-            if any(n in cmd for n in ["cache_manager", "session_handler", "task_worker", "log_rotator", "health_check"]):
+            if any(n in cmd for n in ["task_worker", "web", "bot"]):
                 psutil.Process(p.info["pid"]).kill()
                 killed.append(p.info["pid"])
         except Exception:
@@ -507,15 +577,15 @@ async def restart():
     ensure_agent_started()
     return {"killed": killed, "message": "restarted"}
 
-# ==================== Modal 入口（名称修改为 web_server 以对齐 Workflow 的构造 URL） ====================
+# ==================== Modal 入口 (已加入 timeout=86400 强化保活) ====================
 @app.function(
     secrets=app_secrets,
-    timeout=86400,
-    min_containers=1,
+    timeout=86400,          # 设置最长运行时间为 24 小时 (86400秒)
+    min_containers=1,       # 维持 1 个常驻实例
     scaledown_window=300,
     region=DEPLOY_REGION,
 )
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
-def web_server():
+def nba_server():
     return web

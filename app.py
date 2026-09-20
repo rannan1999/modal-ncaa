@@ -16,11 +16,11 @@ import modal
 # ==================== 用户可配置 ====================
 MODAL_APP_NAME  = os.environ.get("MODAL_APP_NAME", "proxy-app")
 MODAL_USER_NAME = os.environ.get("MODAL_USER_NAME", "")
-# 注意：Modal 不支持 ap-northeast-3，此处默认推荐使用 ap-southeast（新加坡）或 us-east
+# Modal 支持的区域通常为：us-east, us-west, eu-west, ap-southeast 等
 DEPLOY_REGION   = os.environ.get("DEPLOY_REGION", "ap-southeast")
 SUB_PATH        = os.environ.get("SUB_PATH", "sub")
 
-# ==================== 镜像 ====================
+# ==================== 镜像构建 ====================
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -40,6 +40,7 @@ image = (
 )
 
 # ==================== Secret & Modal App 实例化 ====================
+# 加载 GitHub Actions 创建的 modal-secrets
 app_secrets = [modal.Secret.from_name("modal-secrets")]
 app = modal.App(MODAL_APP_NAME, image=image)
 
@@ -95,7 +96,7 @@ h1{font-size:24px;color:#1a1a2e;margin-bottom:8px;font-weight:700}
 </div>
 <div class="divider"></div>
 <div class="footer">
-<p>&copy; 2025 Cloud Services Platform. All rights reserved.</p>
+<p>&copy; 2026 Cloud Services Platform. All rights reserved.</p>
 <p>Powered by distributed cloud architecture</p>
 <div class="tech-stack">
 <span class="tech-item">Kubernetes</span>
@@ -414,7 +415,7 @@ ingress:
     ensure_agent_started()
 
     if MODAL_USER_NAME:
-        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-ncaa-server.modal.run/{SUB_PATH}")
+        print(f"订阅地址: https://{MODAL_USER_NAME}--{MODAL_APP_NAME}-web_server.modal.run/{SUB_PATH}")
     print(f"节点域名: {domain_for_links}")
     print("=" * 50)
 
@@ -506,7 +507,7 @@ async def restart():
     ensure_agent_started()
     return {"killed": killed, "message": "restarted"}
 
-# ==================== Modal 入口 ====================
+# ==================== Modal 入口（名称修改为 web_server 以对齐 Workflow 的构造 URL） ====================
 @app.function(
     secrets=app_secrets,
     timeout=86400,
@@ -516,5 +517,5 @@ async def restart():
 )
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
-def ncaa_server():
+def web_server():
     return web

@@ -14,7 +14,7 @@ on:
       deploy_region:
         description: '选择部署区域（Broad 自动分配 / Specific 精确指定）'
         required: false
-        default: 'eu-north | 北欧（自动分配）'
+        default: 'eu-south | 欧洲南部（自动分配）'
         type: choice
         options:
           # ====== 美国东部 US-EAST ======
@@ -216,7 +216,7 @@ jobs:
 
       - name: 解析部署区域
         run: |
-          FULL_INPUT="${{ github.event.inputs.deploy_region || 'eu-north | 北欧（自动分配）' }}"
+          FULL_INPUT="${{ github.event.inputs.deploy_region || 'eu-south | 欧洲南部（自动分配）' }}"
 
           if echo "$FULL_INPUT" | grep -q '|'; then
             REGION=$(echo "$FULL_INPUT" | cut -d'|' -f1 | xargs)

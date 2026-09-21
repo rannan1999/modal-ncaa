@@ -14,7 +14,7 @@ on:
       deploy_region:
         description: '选择部署区域（Broad 自动分配 / Specific 精确指定）'
         required: false
-        default: 'us-east | 美国东部（自动分配）'
+        default: 'eu-north | 北欧（自动分配）'
         type: choice
         options:
           # ====== 美国东部 US-EAST ======
